@@ -60,12 +60,16 @@ class SimulationManager:
             context.agent.learn(context.state, action, reward, next_state)
             context.agent.update_metrics(reward, action)
             context.state = next_state
+            diagnostics = context.agent.training_details()
             metrics_snapshot[name] = {
                 "reward": reward,
                 "cumulative_reward": context.portfolio.cumulative_reward,
                 "win_rate": context.portfolio.win_rate,
                 "average_reward": context.portfolio.average_reward,
                 "last_action": ACTION_MAP[action],
+                "experience_steps": context.agent.metrics.steps,
+                "states_tracked": diagnostics.get("States Tracked", 0),
+                "exploration": diagnostics.get("Exploration", "N/A"),
             }
 
         self.history.append({name: values["cumulative_reward"] for name, values in metrics_snapshot.items()})
@@ -84,7 +88,9 @@ class SimulationManager:
                     "Average Reward": context.portfolio.average_reward,
                     "Win Rate": context.portfolio.win_rate,
                     "Trades": len(context.portfolio.realized_rewards),
+                    "Last Reward": context.agent.metrics.rewards[-1] if context.agent.metrics.rewards else 0.0,
                     "Last Action": context.agent.metrics.last_action_name,
+                    "Experience Steps": context.agent.metrics.steps,
                 }
             )
         return pd.DataFrame(records)
@@ -93,3 +99,28 @@ class SimulationManager:
         if not self.history:
             return pd.DataFrame()
         return pd.DataFrame(self.history)
+
+    def training_details_frame(self) -> pd.DataFrame:
+        records = []
+        for name, context in self.agent_contexts.items():
+            details = dict(context.agent.training_details())
+            details["Agent"] = name
+            details.setdefault("Experience Steps", context.agent.metrics.steps)
+            records.append(details)
+
+        if not records:
+            return pd.DataFrame()
+
+        frame = pd.DataFrame(records)
+        preferred_order = [
+            "Agent",
+            "Strategy",
+            "Experience Steps",
+            "States Tracked",
+            "Exploration",
+            "Learning Rate",
+            "Discount",
+        ]
+        ordered_columns = [col for col in preferred_order if col in frame.columns]
+        remaining_columns = [col for col in frame.columns if col not in ordered_columns]
+        return frame[ordered_columns + remaining_columns]

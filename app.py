@@ -2,13 +2,19 @@
 from __future__ import annotations
 
 import time
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import altair as alt
 import pandas as pd
 import streamlit as st
 
-from dynamic_rl_stock_trading.agents import QLearningAgent, RandomAgent, SarsaAgent
+from dynamic_rl_stock_trading.agents import (
+    BoltzmannQLearningAgent,
+    DoubleQLearningAgent,
+    QLearningAgent,
+    RandomAgent,
+    SarsaAgent,
+)
 from dynamic_rl_stock_trading.environment import PriceSimulator
 from dynamic_rl_stock_trading.simulation import SimulationManager
 
@@ -20,6 +26,8 @@ def create_agents(selected: List[str]) -> List:
         "Q-Learning": QLearningAgent,
         "SARSA": SarsaAgent,
         "Random": RandomAgent,
+        "Double Q-Learning": DoubleQLearningAgent,
+        "Boltzmann Q-Learning": BoltzmannQLearningAgent,
     }
     return [mapping[name]() for name in selected]
 
@@ -67,8 +75,19 @@ with st.sidebar:
     update_delay = st.slider("Update delay (seconds)", min_value=0.0, max_value=0.5, value=0.05, step=0.01)
     selected_agents = st.multiselect(
         "Agents",
-        options=["Q-Learning", "SARSA", "Random"],
-        default=["Q-Learning", "SARSA", "Random"],
+        options=[
+            "Q-Learning",
+            "SARSA",
+            "Random",
+            "Double Q-Learning",
+            "Boltzmann Q-Learning",
+        ],
+        default=[
+            "Q-Learning",
+            "SARSA",
+            "Double Q-Learning",
+            "Boltzmann Q-Learning",
+        ],
     )
 
 if not selected_agents:
@@ -85,14 +104,16 @@ if run_button:
     price_placeholder = st.empty()
     metrics_placeholder = st.empty()
     reward_placeholder = st.empty()
+    training_placeholder = st.empty()
     progress_bar = st.progress(0)
     status_placeholder = st.empty()
 
     for step in range(1, num_steps + 1):
-        metrics_snapshot: Dict[str, Dict[str, float]] = manager.step()
+        metrics_snapshot: Dict[str, Dict[str, Any]] = manager.step()
         price_frame = manager.price_history_frame()
         metrics_frame = manager.metrics_frame()
         reward_frame = manager.rewards_over_time()
+        training_frame = manager.training_details_frame()
 
         with price_placeholder.container():
             st.subheader("Simulated Price")
@@ -100,15 +121,44 @@ if run_button:
 
         with metrics_placeholder.container():
             st.subheader("Agent Metrics")
-            st.dataframe(metrics_frame.style.format({"Cumulative Reward": "{:.4f}", "Average Reward": "{:.4f}", "Win Rate": "{:.2%}"}))
+            st.dataframe(
+                metrics_frame.style.format(
+                    {
+                        "Cumulative Reward": "{:.4f}",
+                        "Average Reward": "{:.4f}",
+                        "Win Rate": "{:.2%}",
+                        "Last Reward": "{:.4f}",
+                    }
+                )
+            )
 
         with reward_placeholder.container():
             st.subheader("Cumulative Reward Trajectories")
             render_rewards_chart(reward_frame)
 
+        with training_placeholder.container():
+            st.subheader("Training Diagnostics")
+            if training_frame.empty:
+                st.info("Diagnostics will appear once the simulation starts generating data.")
+            else:
+                st.dataframe(
+                    training_frame.set_index("Agent").style.format(
+                        {
+                            "Experience Steps": "{:.0f}",
+                            "States Tracked": "{:.0f}",
+                            "Learning Rate": "{:.3f}",
+                            "Discount": "{:.3f}",
+                        }
+                    )
+                )
+
         progress_bar.progress(step / num_steps)
         status_lines = [
-            f"**{name}** → Reward: {values['reward']:.4f}, Cumulative: {values['cumulative_reward']:.4f}, Action: {values['last_action']}"
+            (
+                f"**{name}** → Reward: {values['reward']:.4f}, "
+                f"Cumulative: {values['cumulative_reward']:.4f}, Action: {values['last_action']}, "
+                f"Steps: {values['experience_steps']}, States: {values['states_tracked']}, Exploration: {values['exploration']}"
+            )
             for name, values in metrics_snapshot.items()
         ]
         status_placeholder.markdown("\n".join(status_lines))
